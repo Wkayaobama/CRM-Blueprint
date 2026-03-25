@@ -1,0 +1,661 @@
+# Canonical ontology + vault layout contract for the Obsidian Shadow CRM
+# Date: 2026-03-25
+#
+# Design goals:
+# - Obsidian vault is the canonical store and ontology surface area.
+# - Teams + Views are first-class (nested inside each entity, not beside it).
+# - Records live under team scopes.
+# - Views are static tables (optionally also Dataview blocks).
+# - Companion notes are user-owned and never overwritten.
+#
+# Entity structure:
+#   ontology.entities[]
+#     └── <EntityName>
+#           ├── properties {}
+#           ├── relationships {}
+#           ├── vault_layout {}
+#           └── teams[]                 ← list; team is the scope
+#                 └── team object
+#                       ├── key: "IcAlps"
+#                       └── views[]     ← nested inside team, not beside it
+#                             └── view object
+#                                   ├── name: "..."
+#                                   └── display_properties: [...]
+
+ontology:
+  name: "Unified CRM"
+  version: "0.1.0"
+  canonical_store: "obsidian_vault"
+
+  # ----------------------------
+  # Vault contract (paths)
+  # ----------------------------
+  vault:
+    root_dir: "crm"
+
+    system:
+      dir: "crm/_system"
+      home_note: "crm/_system/Home.md"
+      run_log: "crm/_system/RunLog.md"
+      mapping_report: "crm/_system/MappingReport.md"
+      registry_csv: "crm/_system/registry.csv"
+      diagnostics_dir: "crm/_system/diagnostics"
+      network_metrics_csv: "crm/_system/entity_network_metrics.csv"
+      network_report_txt: "crm/_system/entity_network_analysis_report.txt"
+
+    ontology_notes:
+      dir: "crm/_ontology"
+      entities_index_note: "crm/_ontology/Entities.md"
+      relationships_note: "crm/_ontology/Relationships.md"
+      teams_index_note: "crm/_ontology/Teams.md"
+      views_index_note: "crm/_ontology/Views.md"
+
+    mappings:
+      dir: "crm/_mappings"
+      format: "yaml"
+      example_note: "crm/_mappings/IcAlps__Contact.mapping.yaml"
+
+    rules:
+      dir: "crm/_rules"
+      phone_rules: "crm/_rules/phone.yaml"
+      linkedin_rules: "crm/_rules/linkedin.yaml"
+
+  # ----------------------------
+  # Top-level team definitions (ingestion metadata / sources)
+  # Views are NOT here — they live inside each entity's teams[] list.
+  # ----------------------------
+  teams:
+    - key: "IcAlps"
+      display_name: "IcAlps"
+      description: "IcAlps commercial and operations team"
+      ingestion:
+        default_sources:
+          - type: "csv"
+            filename_patterns:
+              - "IcAlps__*.csv"
+          - type: "mysql"
+            tables:
+              - "crm_contacts"
+              - "crm_companies"
+          - type: "kafka"
+            topics:
+              - "raw-contact-events"
+              - "raw-company-events"
+
+    - key: "SEALSQ"
+      display_name: "SEALSQ"
+      description: "SEALSQ business unit"
+      ingestion:
+        default_sources:
+          - type: "csv"
+            filename_patterns:
+              - "SEALSQ__*.csv"
+
+  # ----------------------------
+  # Entities (canonical)
+  # teams[] is nested inside each entity with views[] inside each team.
+  # ----------------------------
+  entities:
+    Company:
+      description: "Organization or business entity"
+      primary_key:
+        property: "icalps_company_id"
+        type: "string"
+        required: true
+        unique: true
+
+      record_naming:
+        title_properties: ["name", "company_name", "domain", "icalps_company_id"]
+        filename_slug_from: "title"
+
+      vault_layout:
+        record_dir_template: "crm/Company/{team}/"
+        record_note_template: "crm/Company/{team}/{slug}.md"
+        companion_note_template: "crm/Company/{team}/{slug}.notes.md"
+        views_dir_template: "crm/Company/_teams/{team}/views/"
+
+      properties:
+        icalps_company_id:
+          type: "string"
+          required: true
+          unique: true
+          constraint: "Must not be null or empty"
+
+        name:
+          type: "string"
+          required: true
+          aliases: ["Company name", "company_name"]
+
+        website:
+          type: "string"
+          required: false
+          format: "url"
+          aliases: ["Company Domain Name", "domain", "website_url"]
+
+        linkedin_company_page:
+          type: "string"
+          required: false
+          format: "url"
+          aliases: ["LinkedIn Company Page"]
+
+        phone:
+          type: "string"
+          required: false
+          format: "phone"
+          aliases: ["Icalps_CompanyPhone", "IcAlps_CompanyPhone"]
+
+        industry:
+          type: "string"
+          required: false
+          aliases: ["Industry"]
+
+        number_of_employees:
+          type: "integer"
+          required: false
+          aliases: ["Number of Employees"]
+
+        comp_status:
+          type: "enumeration"
+          allowed_values: ["Active", "Inactive", "Closed"]
+          required: false
+          aliases: ["IcAlps_CompanyStatus"]
+
+        address_full:
+          type: "string"
+          required: false
+          aliases: ["IcAlps_Full Address"]
+
+        address_country:
+          type: "string"
+          required: false
+          aliases: ["IcAlps_Address_Country"]
+
+        address_city:
+          type: "string"
+          required: false
+          aliases: ["City", "IcAlps_City"]
+
+        address_state:
+          type: "string"
+          required: false
+          aliases: ["IcAlps_Address_State"]
+
+        address_postcode:
+          type: "string"
+          required: false
+          aliases: ["IcAlps_Address_PostCode"]
+
+        create_date:
+          type: "date"
+          required: false
+          format: "YYYY-MM-DD"
+          aliases: ["Create Date"]
+
+        last_activity_date:
+          type: "date"
+          required: false
+          format: "YYYY-MM-DD"
+          aliases: ["Last Activity Date"]
+
+      relationships:
+        outgoing:
+          - name: "primary_contact"
+            to_entity: "Contact"
+            cardinality: "1:0..1"
+            via_property: "primary_contact_id"
+            description: "Primary contact for the company (optional)"
+        incoming:
+          - name: "contacts"
+            from_entity: "Contact"
+            cardinality: "1:N"
+            via_property: "company_association"
+          - name: "deals"
+            from_entity: "Deal"
+            cardinality: "1:N"
+            via_property: "company_association"
+
+      # teams[] — team is the scope; views[] are nested inside each team
+      teams:
+        - key: "IcAlps"
+          views:
+            - key: "company_overview"
+              name: "IcAlps Company Overview"
+              display_properties:
+                - "icalps_company_id"
+                - "name"
+                - "website"
+                - "phone"
+                - "comp_status"
+                - "last_activity_date"
+            - key: "company_minimal"
+              name: "IcAlps Minimal"
+              display_properties:
+                - "name"
+                - "website"
+
+        - key: "SEALSQ"
+          views:
+            - key: "sealsq_hq_list"
+              name: "SEALSQ HQ List"
+              display_properties:
+                - "name"
+                - "website"
+                - "phone"
+
+    Contact:
+      description: "Person related to a company"
+      primary_key:
+        property: "icalps_contact_id"
+        type: "string"
+        required: true
+        unique: true
+
+      record_naming:
+        title_properties: ["fullname", "email", "icalps_contact_id"]
+        filename_slug_from: "title"
+
+      vault_layout:
+        record_dir_template: "crm/Contact/{team}/"
+        record_note_template: "crm/Contact/{team}/{slug}.md"
+        companion_note_template: "crm/Contact/{team}/{slug}.notes.md"
+        views_dir_template: "crm/Contact/_teams/{team}/views/"
+
+      properties:
+        icalps_contact_id:
+          type: "string"
+          required: true
+          unique: true
+
+        firstname:
+          type: "string"
+          required: true
+          aliases: ["First Name"]
+
+        lastname:
+          type: "string"
+          required: true
+          aliases: ["Last Name"]
+
+        fullname:
+          type: "string"
+          required: false
+          derived_from: ["firstname", "lastname"]
+
+        email:
+          type: "string"
+          required: true
+          constraint: "regex: ^[^@]+@[^@]+\\.[^@]+$"
+          aliases: ["Email"]
+
+        phone:
+          type: "string"
+          required: false
+          format: "phone"
+          aliases: ["Phone Number", "IcAlps_BusinessPhone"]
+
+        mobile:
+          type: "string"
+          required: false
+          format: "phone"
+          aliases: ["IcAlps_MobilePhone"]
+
+        linkedin_url:
+          type: "string"
+          required: false
+          format: "url"
+          aliases: ["LinkedIn URL"]
+
+        language:
+          type: "string"
+          required: false
+          aliases: ["icalps_language", "language_text"]
+
+        salutation:
+          type: "string"
+          required: false
+          aliases: ["icalps_salutations"]
+
+        personal_title:
+          type: "string"
+          required: false
+          aliases: ["Icalps_PersTitle"]
+
+        civil_status:
+          type: "string"
+          required: false
+          aliases: ["icalps_civil"]
+
+        lead_status:
+          type: "string"
+          required: false
+          aliases: ["Lead Status"]
+
+        marketing_contact_status:
+          type: "string"
+          required: false
+          aliases: ["Marketing contact status"]
+
+        contact_owner:
+          type: "string"
+          required: false
+          aliases: ["Contact owner"]
+
+        create_date:
+          type: "date"
+          required: false
+          format: "YYYY-MM-DD"
+          aliases: ["Create Date", "IcAlps_ContactCreatedDate"]
+
+        last_activity_date:
+          type: "date"
+          required: false
+          format: "YYYY-MM-DD"
+          aliases: ["Last Activity Date"]
+
+        company_association:
+          type: "foreign_key"
+          reference: "Company.icalps_company_id"
+          required: true
+          aliases: ["icalps_company_id"]
+
+      relationships:
+        outgoing:
+          - name: "company"
+            to_entity: "Company"
+            cardinality: "N:1"
+            via_property: "company_association"
+        incoming:
+          - name: "deals"
+            from_entity: "Deal"
+            cardinality: "1:N"
+            via_property: "contact_association"
+          - name: "communications"
+            from_entity: "Communication"
+            cardinality: "1:N"
+            via_property: "communication_contact"
+
+      teams:
+        - key: "IcAlps"
+          views:
+            - key: "contact_directory"
+              name: "Contact Directory"
+              display_properties:
+                - "firstname"
+                - "lastname"
+                - "email"
+                - "company_association"
+
+        - key: "SEALSQ"
+          views:
+            - key: "sealsq_contacts"
+              name: "SEALSQ Contacts"
+              display_properties:
+                - "firstname"
+                - "lastname"
+                - "email"
+
+    Deal:
+      description: "Sales opportunity or project"
+      primary_key:
+        property: "icalps_deal_id"
+        type: "string"
+        required: true
+        unique: true
+
+      record_naming:
+        title_properties: ["dealname", "icalps_deal_id"]
+        filename_slug_from: "title"
+
+      vault_layout:
+        record_dir_template: "crm/Deal/{team}/"
+        record_note_template: "crm/Deal/{team}/{slug}.md"
+        companion_note_template: "crm/Deal/{team}/{slug}.notes.md"
+        views_dir_template: "crm/Deal/_teams/{team}/views/"
+
+      properties:
+        icalps_deal_id:
+          type: "string"
+          required: true
+          unique: true
+
+        dealname:
+          type: "string"
+          required: true
+          aliases: ["dealname"]
+
+        pipeline_name:
+          type: "string"
+          required: false
+          aliases: ["pipeline_name"]
+
+        pipeline:
+          type: "string"
+          required: false
+          aliases: ["pipeline"]
+
+        dealstage_name:
+          type: "string"
+          required: false
+          aliases: ["dealstage_name"]
+
+        dealstage:
+          type: "string"
+          required: false
+          aliases: ["dealstage"]
+
+        amount:
+          type: "decimal"
+          required: false
+          aliases: ["amount"]
+
+        forecast:
+          type: "string"
+          required: false
+          aliases: ["icalps_dealforecast"]
+
+        certainty:
+          type: "string"
+          required: false
+          aliases: ["icalps_dealcertainty"]
+
+        deal_type:
+          type: "string"
+          required: false
+          aliases: ["icalps_dealtype"]
+
+        deal_status:
+          type: "string"
+          required: false
+          aliases: ["icalps_dealstatus"]
+
+        deal_category:
+          type: "string"
+          required: false
+          aliases: ["icalps_dealcategory"]
+
+        deal_notes:
+          type: "string"
+          required: false
+          aliases: ["icalps_dealnotes"]
+
+        deal_created_date:
+          type: "date"
+          required: false
+          format: "YYYY-MM-DD"
+          aliases: ["icalps_deal_created_date"]
+
+        company_association:
+          type: "foreign_key"
+          reference: "Company.icalps_company_id"
+          required: true
+          aliases: ["icalps_company_id"]
+
+        contact_association:
+          type: "foreign_key"
+          reference: "Contact.icalps_contact_id"
+          required: false
+          aliases: ["icalps_contact_id"]
+
+        brand:
+          type: "string"
+          required: false
+          aliases: ["brand"]
+
+      relationships:
+        outgoing:
+          - name: "company"
+            to_entity: "Company"
+            cardinality: "N:1"
+            via_property: "company_association"
+          - name: "contact"
+            to_entity: "Contact"
+            cardinality: "N:0..1"
+            via_property: "contact_association"
+        incoming:
+          - name: "communications"
+            from_entity: "Communication"
+            cardinality: "1:N"
+            via_property: "communication_deal"
+
+      teams:
+        - key: "IcAlps"
+          views:
+            - key: "current_opportunities"
+              name: "Current Opportunities"
+              display_properties:
+                - "dealname"
+                - "amount"
+                - "deal_created_date"
+                - "dealstage"
+
+        - key: "SEALSQ"
+          views:
+            - key: "deal_pipeline"
+              name: "Deal Pipeline"
+              display_properties:
+                - "dealname"
+                - "dealstage"
+                - "deal_created_date"
+
+    Communication:
+      description: "Logged interaction/email/meeting etc."
+      primary_key:
+        property: "icalps_comm_id"
+        type: "string"
+        required: true
+        unique: true
+
+      record_naming:
+        title_properties: ["subject", "icalps_comm_id"]
+        filename_slug_from: "title"
+
+      vault_layout:
+        record_dir_template: "crm/Communication/{team}/"
+        record_note_template: "crm/Communication/{team}/{slug}.md"
+        companion_note_template: "crm/Communication/{team}/{slug}.notes.md"
+        views_dir_template: "crm/Communication/_teams/{team}/views/"
+
+      properties:
+        icalps_comm_id:
+          type: "string"
+          required: true
+          unique: true
+
+        subject:
+          type: "string"
+          required: false
+
+        timestamp:
+          type: "datetime"
+          required: true
+          format: "YYYY-MM-DDTHH:MM:SS"
+
+        communication_deal:
+          type: "foreign_key"
+          reference: "Deal.icalps_deal_id"
+          required: false
+          aliases: ["icalps_deal_id"]
+
+        communication_contact:
+          type: "foreign_key"
+          reference: "Contact.icalps_contact_id"
+          required: false
+          aliases: ["icalps_contact_id"]
+
+        communication_company:
+          type: "foreign_key"
+          reference: "Company.icalps_company_id"
+          required: false
+          aliases: ["icalps_company_id"]
+
+      relationships:
+        outgoing:
+          - name: "deal"
+            to_entity: "Deal"
+            cardinality: "N:0..1"
+            via_property: "communication_deal"
+          - name: "contact"
+            to_entity: "Contact"
+            cardinality: "N:0..1"
+            via_property: "communication_contact"
+          - name: "company"
+            to_entity: "Company"
+            cardinality: "N:0..1"
+            via_property: "communication_company"
+
+      teams:
+        - key: "IcAlps"
+          views:
+            - key: "activity_log"
+              name: "Activity Log"
+              display_properties:
+                - "subject"
+                - "timestamp"
+                - "communication_contact"
+                - "communication_deal"
+
+  # ----------------------------
+  # Network analysis configuration
+  # ----------------------------
+  network_analysis:
+    enabled: true
+    default_graph: "entity_type"
+    graphs:
+      entity_type:
+        nodes: "ontology.entities"
+        edges: "ontology.entities.*.relationships"
+        metrics:
+          - "degree_centrality"
+          - "in_degree_centrality"
+          - "out_degree_centrality"
+          - "betweenness_centrality"
+        outputs:
+          metrics_csv: "crm/_system/entity_network_metrics.csv"
+          report_txt: "crm/_system/entity_network_analysis_report.txt"
+
+  # ----------------------------
+  # Notes generation policy
+  # ----------------------------
+  generation_policy:
+    record_notes:
+      overwrite_generated_notes: true
+      preserve_companion_notes: true
+      companion_suffix: ".notes.md"
+      include_relationship_section: true
+      include_view_backlinks: true
+
+    views:
+      materialize_static_tables: true
+      include_optional_dataview_block: true
+      filtering: "none"
+
+    mapping:
+      allow_fuzzy_matching: true
+      fuzzy_threshold_default: 85
+      mapping_notes_override_fuzzy: true
+      unresolved_marker: "?"
+
+    registry:
+      write_registry: true
+      primary_key_resolution: "crm_key"
+      include_note_path: true
